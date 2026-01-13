@@ -1,0 +1,285 @@
+---
+title: "Final Assignment"
+author: "Yousuf Ahmed Nahian (202509052)"
+date: "2025-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(nycflights13)
+library(tidytext)
+library(textdata)  
+```
+
+# Solution to Q.A
+
+```{r}
+data("flights")
+
+flights_weekly <- flights |> 
+  mutate(
+    date = make_date(year, month, day),                    
+    week = floor_date(date, unit = "week"),                
+    is_cancelled = is.na(dep_delay),                       
+    is_late = dep_delay > 15                               
+  ) |>
+  group_by(week) |>                                        
+  summarise(
+    mean_delay = mean(dep_delay, na.rm = TRUE),            
+    median_delay = median(dep_delay, na.rm = TRUE),        
+    late_rate = mean(is_late, na.rm = TRUE),              
+    cancel_rate = mean(is_cancelled),                      
+    n_flights = n()                                        
+  ) |>
+  ungroup()                                                
+```
+
+```{r}
+flights_weekly_long <- flights_weekly |>
+  select(week, mean_delay, late_rate, cancel_rate) |>     
+  pivot_longer(
+    cols = -week,                                          
+    names_to = "measure",                                  
+    values_to = "value"                                    
+  )
+```
+
+```{r}
+ggplot(flights_weekly_long, aes(x = week, y = value)) +
+  geom_line(alpha = 0.6) +
+  geom_smooth(se = TRUE) +
+  facet_wrap(~ measure, scales = "free_y") +
+  labs(
+    title = "Weekly departure performance for NYC flights in 2013",
+    x = "Week",
+    y = "Value",
+  ) +
+  theme_minimal()
+```
+
+# Conclusion 
+Delays clearly increase during the middle of the year, with both mean delay and late departures peaking in summer. Cancellation rates stay low most weeks but show a few sharp spikes, mostly early in the year. Overall, delays and late follow a smoother seasonal trend, while cancellations are more irregular.
+
+# Solution to Q.B
+
+```{r}
+imdb_path <- "C:/Users/yousu/Downloads/IMDb" 
+
+title_basics <- read_tsv(
+  file.path(imdb_path, "title.basics.tsv.gz"),
+  na = "\\N",
+  col_select = c(tconst, primaryTitle, startYear)   
+)
+
+title_ratings <- read_tsv(
+  file.path(imdb_path, "title.ratings.tsv.gz"),
+  na = "\\N",
+  col_select = c(tconst, averageRating)             
+)
+
+title_principals <- read_tsv(
+  file.path(imdb_path, "title.principals.tsv.gz"),
+  na = "\\N",
+  col_select = c(tconst, nconst, category)          
+)
+
+name_basics <- read_tsv(
+  file.path(imdb_path, "name.basics.tsv.gz"),
+  na = "\\N",
+  col_select = c(nconst, primaryName)               
+)
+```
+
+```{r}
+check_relation <- function(primary_df, primary_key, foreign_df, foreign_key) {
+  
+  missing_values <- sum(!foreign_df[[foreign_key]] %in% primary_df[[primary_key]])
+  
+  if(missing_values == 0) {
+    return(TRUE)   
+  } else {
+    return(FALSE)  
+  }
+}
+```
+
+```{r}
+rel1 <- check_relation(title_basics, "tconst", title_ratings, "tconst")
+
+rel2 <- check_relation(title_basics, "tconst", title_principals, "tconst")
+
+rel3 <- check_relation(name_basics, "nconst", title_principals, "nconst")
+
+```
+
+```{r}
+sum(!title_principals$tconst %in% title_basics$tconst)
+
+sum(!title_principals$nconst %in% name_basics$nconst)
+```
+
+```{r}
+missing_movies <- title_principals %>%
+  filter(!tconst %in% title_basics$tconst) %>%
+  head(10)
+
+missing_movies
+
+missing_people <- title_principals %>%
+  filter(!nconst %in% name_basics$nconst) %>%
+  head(10)
+
+missing_people
+```
+
+```{r}
+directors_data <- title_principals %>%
+  filter(category == "director") %>%           
+  left_join(title_ratings, by = "tconst") %>%  
+  left_join(name_basics, by = "nconst")       
+```
+
+```{r}
+director_scores <- directors_data %>%
+  filter(!is.na(averageRating)) %>%            
+  group_by(primaryName) %>%                    
+  summarise(
+    avg_rating = mean(averageRating),          
+    movies = n()                               
+  ) %>%
+  filter(movies >= 5) %>%                       
+  arrange(desc(avg_rating))                     
+```
+
+```{r}
+top_directors <- director_scores %>% slice_max(avg_rating, n = 20)
+
+ggplot(top_directors, aes(x = avg_rating, y = reorder(primaryName, avg_rating))) +
+  geom_col(fill = "lightblue") +
+  labs(title="Top Directors by IMDb Rating (5+ movies)",
+       x="Average Rating", y="Director") +
+  theme_minimal()
+```
+
+# Conclsuion
+I evaluated three primary-foreign key relationships in the IMDb dataset.
+title.basics → title.ratings was valid, confirming that every rated movie exists in the main movie table.
+
+In contrast, title.basics → title_principals and name.basics → title_principals failed, with 15,189 titles and 4,267 people missing. This is likely because IMDb principals includes TV episodes, short films and incomplete entries that are not present in the other tables.
+
+I then analyzed movie quality by focusing on directors, using the IMDb average rating as my metric. After merging tables and grouping by director, i calculated the average rating for all directors with at least five movies revealing clear differences in quality across individuals. Some directors consistently achieve high ratings, while others score significantly lower.
+
+# Solution to Q.C
+
+```{r}
+plots <- read.csv("wiki_movie_plots.csv")
+names(plots)
+```
+
+```{r}
+plots2 <- plots %>%
+  rename(primaryTitle = Title,
+         startYear    = Release.Year)
+```
+
+```{r}
+relation_plots_imdb <- check_relation(
+  primary_df = title_basics, primary_key = "primaryTitle",
+  foreign_df = plots2,       foreign_key = "primaryTitle"
+)
+
+relation_plots_imdb
+```
+
+```{r}
+sum(!plots2$primaryTitle %in% title_basics$primaryTitle)
+```
+
+```{r}
+movie_join <- title_basics %>%
+  left_join(plots2,        by = c("primaryTitle", "startYear")) %>%  
+  left_join(title_ratings, by = "tconst")      
+```
+
+```{r}
+words <- movie_join %>%
+  select(tconst, primaryTitle, averageRating, Plot) %>%
+  unnest_tokens(word, Plot)        
+
+sent <- get_sentiments("afinn")    
+
+movie_sentiment <- words %>%
+  inner_join(sent, by="word") %>%
+  group_by(tconst, primaryTitle, averageRating) %>%
+  summarise(sentiment_score = mean(value), .groups="drop")
+```
+
+```{r}
+ggplot(movie_sentiment, aes(x = averageRating, y = sentiment_score)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth() +
+  labs(title = "Sentiment Score vs IMDb Rating",
+       x = "IMDb Rating",
+       y = "Average Plot Sentiment Score") +
+  theme_minimal()
+```
+
+# Conclusion 
+The wiki_movie_plots dataset can be joined with IMDb using Title and Release Year.
+Testing showed that matching only by Title returned FALSE, with 4,344 movies not linking between datasets.
+This indicates an imperfect relationship due to alternate titles, missing entries, remakes, and inconsistent year information. joining by both title and Year improves linkage but still loses films.
+
+After joining the datasets, I performed sentiment analysis on plot text using the AFINN dictionary. Movies with more positive plot wording generally showed higher IMDb ratings, although the trend is moderate with considerable variation.
+
+Overall, the datasets link reasonably but not perfectly, and sentiment appears weakly correlated with movie rating.
+
+# Solution to Q.D
+
+```{r}
+words <- movie_join %>%
+  select(primaryTitle, startYear, Plot) %>%
+  filter(!is.na(startYear)) %>%
+  unnest_tokens(word, Plot)   
+```
+
+```{r}
+sent <- get_sentiments("afinn")
+
+movie_sent_year <- words %>%
+  inner_join(sent, by="word") %>%
+  group_by(primaryTitle, startYear) %>%
+  summarise(sentiment_score = mean(value), .groups="drop")
+```
+
+```{r}
+ggplot(movie_sent_year, aes(x = startYear, y = sentiment_score)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(color="blue") +
+  labs(title="How Plot Sentiment Changes by Movie Release Year",
+       x="Release Year",
+       y="Average Sentiment Score") +
+  theme_minimal()
+```
+
+# Conclusion 
+Movies released in more recent years show slightly higher sentiment scores compared to older films. Although the trend is not strong, the results suggest that modern movies tend to have more positive or emotionally uplifting plott descriptions than earlier ones. This is a simple pattern and may vary by genre, but it shows how movie tone has changed over time.
+
+
+
+
+
+
+
+
+
+
+
+
